@@ -16,6 +16,7 @@
               <el-dropdown-item @click="clearRoute" :disabled="drawnCoordinates.length === 0"
                 >清除路线</el-dropdown-item
               >
+              <el-dropdown-item @click="showRouteDialog">加载保存路线</el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
@@ -70,14 +71,54 @@
       <el-pagination size="small" layout="prev, pager, next" :total="5" />
     </el-dialog>
 
-    <!-- 创建路线 -->
+    <!-- 展示保存路线对话框 -->
+    <el-dialog v-model="dialogShowRoutes" title="Select Saved Route" width="600">
+      <el-table
+        :data="savedRoutes"
+        style="width: 100%; height: 60vh"
+        @current-change="handleSelectedRoute"
+        highlight-current-row
+      >
+        <el-table-column prop="name" label="Route Name" />
+        <el-table-column prop="createdAt" label="Created Time" width="180">
+          <template #default="{ row }">
+            {{ new Date(row.createdAt).toLocaleString() }}
+          </template>
+        </el-table-column>
+      </el-table>
+      <div class="dialog-footer">
+        <el-button
+          color="#082631"
+          style="margin-top: 20px"
+          @click="loadSelectedRoute"
+          :disabled="!selectedRouteId"
+        >
+          确认
+        </el-button>
+        <el-button
+          type="danger"
+          style="margin-top: 20px; margin-left: 10px"
+          @click="deleteSelectedRoute"
+          :disabled="!selectedRouteId"
+        >
+          删除
+        </el-button>
+      </div>
+      <el-pagination
+        small
+        layout="prev, pager, next"
+        :total="totalRoutes"
+        @current-change="handlePageChange"
+      />
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import * as Cesium from 'cesium'
-import { ElMessage, ElMessageBox } from 'element-plus'
 
+import { ElMessage, ElMessageBox } from 'element-plus'
+import axios from 'axios'
 import { getLayerName, getWorkName, uploadLayer } from '@/api/getLayer.js'
 import { onMounted, ref, reactive, watch, toRefs, nextTick } from 'vue'
 import { handleExceed, uploadFileError } from '@/utils/fileUpload/fileUpload.js'
@@ -107,8 +148,10 @@ let handler = null // 事件处理器
 let entity = null // 存储绘制的路线
 const modelEntity = ref(null)
 // 机器狗的初始坐标
-const initLng = 110.35487965310529
-const initLat = 22.701263836720198
+// const initLng = ref(null)
+// const initLat = ref(null)
+const initLng = 114.34972
+const initLat = 30.5297
 const initAlt = 0
 const startPoint = ref(null)
 
@@ -117,12 +160,66 @@ const startPoint = ref(null)
 //   latitude: 0,
 //   altitude: 0,
 // })
+// const fetchPosition = () => {
+//   axios({
+//     method: 'get',
+//     url: 'http://117.72.53.173:2345/api/go2/position/current',
+//     headers: {},
+//     timeout: 5000
+//   }).then(response => {
+//     if (response.data.status === 'success') {
+//       const { latitude, longitude } = response.data.position
+//       initLng.value = longitude
+//       initLat.value = latitude
+
+//       console.log('经度:', initLng.value)
+//       console.log('纬度:', initLat.value)
+//     } else {
+//       console.error('接口返回失败状态:', response.data.status)
+//     }
+//   }).catch(error => {
+//     console.error('请求失败:', error)
+//   })
+// }
+
+// 每 5 秒获取一次定位
+// let timer = null
+
+//const modelPosition = ref(null)
 
 // 将起点转换为 Cartesian3 坐标
 const fixedFrameTransform = Cesium.Transforms.localFrameToFixedFrameGenerator('north', 'west')
 
 // 初始化起点坐标，并确保不为 null
 startPoint.value = Cesium.Cartesian3.fromDegrees(initLng, initLat, initAlt)
+
+//保存加载路径
+const dialogShowRoutes = ref(false)
+const selectedRouteId = ref(null)
+const savedRoutes = ref([])
+const currentPage = ref(1)
+const pageSize = ref(10)
+const totalRoutes = ref(0)
+const routeLoading = ref(false)
+
+// 时间格式化方法
+const formatDateTime = (timestamp) => {
+  return new Date(timestamp).toLocaleString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+//获取狗的坐标
+
+// 显示对话框方法
+const showRouteDialog = async () => {
+  dialogShowRoutes.value = true
+  await loadSavedRoutes()
+}
 
 onMounted(() => {
   nextTick(() => {
@@ -149,13 +246,18 @@ onMounted(() => {
     shouldAnimate: true,
   })
   initModelAndMonitoring()
+  // fetchPosition()
+  // timer = setInterval(fetchPosition, 5000)
 })
 
 const selectedLayer = ref('')
 const handleSelecedLayer = (rowDate) => {
-  selectedLayer.value = rowDate.date
-  console.log('被选中行的数据', selectedLayer.value)
-  console.log(Cesium.Model)
+  if (rowDate && rowDate.date) {
+    selectedLayer.value = rowDate.date
+    console.log('被选中行的数据', selectedLayer.value)
+  } else {
+    console.error('选中的行数据无效或缺少 date 属性')
+  }
 }
 
 // 加载图层并跳转到指定坐标
@@ -167,9 +269,9 @@ const loadLayers = () => {
     return
   }
 
-  const layerName = `${selectedLayer.value}:${selectedLayer.value}`
-  const layerUrl = `http://202.140.140.215:9999/geoserver/${selectedLayer.value}/wms?` // **检查是否已存在相同的图层，避免重复加载**
-
+  const layerName = `${selectedLayer.value}:${selectedLayer.value}` // const layerUrl = `http://202.140.140.215:9999/geoserver/${selectedLayer.value}/wms?`;
+  const layerUrl = `http://47.122.123.251:8233/geoserver/${selectedLayer.value}/wms?` // const bbox = "114.348977902349,30.528903163361175,114.35036065924551,30.530418382267538";
+  // **检查是否已存在相同的图层，避免重复加载**
   const layers = viewer.value.imageryLayers
   for (let i = 0; i < layers.length; i++) {
     const existingProvider = layers.get(i).imageryProvider
@@ -189,6 +291,7 @@ const loadLayers = () => {
       transparent: true,
       styles: '',
       version: '1.1.1', // 确保 WMS 兼容性
+      // bbox:bbox,
     },
     tileWidth: 256, // 优化瓦片加载
     tileHeight: 256,
@@ -198,13 +301,22 @@ const loadLayers = () => {
   console.log('新图层加载成功') // **仅在首次加载时调整视角**
 
   if (!viewer.value.camera.flyToExecuted) {
+    // viewer.value.camera.flyTo({
+    //   // destination: Cesium.Cartesian3.fromDegrees(110.35036065924551, 22.53041838226753, 50000.0),
+    //   destination: Cesium.Cartesian3.fromDegrees(114.35036065924551, 30.53041838226753, 50000.0),
+    // });//114 30
     viewer.value.camera.flyTo({
-      destination: Cesium.Cartesian3.fromDegrees(110.2025, 22.5561, 50000.0),
+      destination: Cesium.Rectangle.fromDegrees(
+        114.348977902349,
+        30.528903163361175,
+        114.35036065924551,
+        30.530418382267538,
+      ),
     })
+
     viewer.value.camera.flyToExecuted = true // 标记已执行
   }
 }
-
 // // 跳转到指定坐标
 // viewer.value.camera.flyTo({
 //   destination: Cesium.Cartesian3.fromDegrees(114.3550, 30.4796, 800.0),
