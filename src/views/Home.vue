@@ -153,45 +153,32 @@ const modelEntity = ref(null)
 const initLng = 114.34972
 const initLat = 30.5297
 const initAlt = 0
-const startPoint = ref(null)
 
-// const currentCoordinates = reactive({
-//   longitude: 0,
-//   latitude: 0,
-//   altitude: 0,
-// })
-// const fetchPosition = () => {
-//   axios({
-//     method: 'get',
-//     url: 'http://117.72.53.173:2345/api/go2/position/current',
-//     headers: {},
-//     timeout: 5000
-//   }).then(response => {
-//     if (response.data.status === 'success') {
-//       const { latitude, longitude } = response.data.position
-//       initLng.value = longitude
-//       initLat.value = latitude
+// // 将起点转换为 Cartesian3 坐标
+// const fixedFrameTransform = Cesium.Transforms.localFrameToFixedFrameGenerator('north', 'west')
 
-//       console.log('经度:', initLng.value)
-//       console.log('纬度:', initLat.value)
-//     } else {
-//       console.error('接口返回失败状态:', response.data.status)
-//     }
-//   }).catch(error => {
-//     console.error('请求失败:', error)
-//   })
-// }
+// // 初始化起点坐标，并确保不为 null
+// startPoint.value = Cesium.Cartesian3.fromDegrees(initLng, initLat, initAlt)
 
-// 每 5 秒获取一次定位
-// let timer = null
+const startCartesian = Cesium.Cartesian3.fromDegrees(initLng, initLat, initAlt)
 
-//const modelPosition = ref(null)
+// 2. currentPos：用于实时更新的坐标，初始赋为起点
+const currentPos = ref(startCartesian)
 
-// 将起点转换为 Cartesian3 坐标
-const fixedFrameTransform = Cesium.Transforms.localFrameToFixedFrameGenerator('north', 'west')
+let timer = null
 
-// 初始化起点坐标，并确保不为 null
-startPoint.value = Cesium.Cartesian3.fromDegrees(initLng, initLat, initAlt)
+// 定义 fetchPosition：请求后台最新坐标，更新 currentPos
+const fetchPosition = async () => {
+  try {
+    const { data } = await axios.get('http://117.72.53.173:2345/api/go2/position/current')
+    if (data.status === 'success') {
+      const { latitude, longitude } = data.position
+      currentPos.value = Cesium.Cartesian3.fromDegrees(longitude, latitude, initAlt)
+    }
+  } catch (e) {
+    console.error('定位请求失败', e)
+  }
+}
 
 //保存加载路径
 const dialogShowRoutes = ref(false)
@@ -246,8 +233,8 @@ onMounted(() => {
     shouldAnimate: true,
   })
   initModelAndMonitoring()
-  // fetchPosition()
-  // timer = setInterval(fetchPosition, 5000)
+  fetchPosition()
+  timer = setInterval(fetchPosition, 5000)
 })
 
 const selectedLayer = ref('')
@@ -368,38 +355,65 @@ const getnameWork = async () => {
     ElMessage.error(res.msg)
   }
 }
+// const initModelAndMonitoring = () => {
+//   if (!viewer.value) return
+
+//   // 设置起点坐标
+//   const position = Cesium.Cartesian3.fromDegrees(initLng, initLat, initAlt)
+
+//   // 使用 PointPrimitive 显示圆点
+//   const point = viewer.value.scene.primitives.add(new Cesium.PointPrimitiveCollection())
+//   point.add({
+//     position: position, // 圆点的位置
+//     color: Cesium.Color.BLUE, // 圆点颜色
+//     pixelSize: 10, // 圆点大小
+//   })
+
+//   // 添加坐标监测监听器
+//   // viewer.value.scene.preUpdate.addEventListener((scene, time) => {
+//   //   const currentPosition = Cesium.Matrix4.getTranslation(
+//   //     point._primitives[0].modelMatrix,
+//   //     new Cesium.Cartesian3(),
+//   //   )
+//   //   const cartographic = Cesium.Cartographic.fromCartesian(currentPosition)
+//   //   currentCoordinates.longitude = Cesium.Math.toDegrees(cartographic.longitude)
+//   //   currentCoordinates.latitude = Cesium.Math.toDegrees(cartographic.latitude)
+//   //   currentCoordinates.altitude = cartographic.height
+
+//   //   console.log(
+//   //     `当前坐标：${currentCoordinates.longitude.toFixed(6)}, ${currentCoordinates.latitude.toFixed(6)}, ${currentCoordinates.altitude.toFixed(2)}`,
+//   //   )
+//   // })
+// }
+
+// **表单验证规则**
 const initModelAndMonitoring = () => {
   if (!viewer.value) return
 
-  // 设置起点坐标
-  const position = Cesium.Cartesian3.fromDegrees(initLng, initLat, initAlt)
-
-  // 使用 PointPrimitive 显示圆点
-  const point = viewer.value.scene.primitives.add(new Cesium.PointPrimitiveCollection())
-  point.add({
-    position: position, // 圆点的位置
-    color: Cesium.Color.BLUE, // 圆点颜色
-    pixelSize: 10, // 圆点大小
+  // —— ① 固定起点实体 ——
+  viewer.value.entities.add({
+    id: 'start-point',
+    position: startCartesian,
+    point: {
+      pixelSize: 12,
+      color: Cesium.Color.YELLOW,
+    },
   })
 
-  // 添加坐标监测监听器
-  // viewer.value.scene.preUpdate.addEventListener((scene, time) => {
-  //   const currentPosition = Cesium.Matrix4.getTranslation(
-  //     point._primitives[0].modelMatrix,
-  //     new Cesium.Cartesian3(),
-  //   )
-  //   const cartographic = Cesium.Cartographic.fromCartesian(currentPosition)
-  //   currentCoordinates.longitude = Cesium.Math.toDegrees(cartographic.longitude)
-  //   currentCoordinates.latitude = Cesium.Math.toDegrees(cartographic.latitude)
-  //   currentCoordinates.altitude = cartographic.height
-
-  //   console.log(
-  //     `当前坐标：${currentCoordinates.longitude.toFixed(6)}, ${currentCoordinates.latitude.toFixed(6)}, ${currentCoordinates.altitude.toFixed(2)}`,
-  //   )
-  // })
+  // —— ② 动态移动实体 ——
+  viewer.value.entities.add({
+    id: 'moving-point',
+    position: new Cesium.CallbackProperty(() => {
+      // 每次渲染都会读取最新 currentPos
+      return currentPos.value
+    }, false),
+    point: {
+      pixelSize: 10,
+      color: Cesium.Color.BLUE,
+    },
+  })
 }
 
-// **表单验证规则**
 const rules = {
   layerName: [
     { required: true, message: 'Layer Name 不能为空', trigger: 'blur' },
@@ -522,7 +536,7 @@ const startDrawing = () => {
     // 获取当前时间下模型的Cartesian3位置
     startPos = modelEntity.value.position.getValue(viewer.value.clock.currentTime)
   } else {
-    startPos = startPoint.value
+    startPos = startCartesian
   }
   // 将起点加入绘制路线中
   drawnCoordinates.value.push(startPos)
@@ -560,7 +574,7 @@ const startDrawing = () => {
 
       // 计算插值点，设置插值精度（例如 100 个点）
       const interpolatedPoints = []
-      const numPoints = 100
+      const numPoints = 50
       for (let i = 0; i <= numPoints; i++) {
         const t = i / numPoints
         interpolatedPoints.push(spline.evaluate(t))
@@ -601,15 +615,15 @@ const sendRouteToBackend = async () => {
   const positions = drawnCoordinates.value.map((cartesian) => {
     const cartographic = Cesium.Cartographic.fromCartesian(cartesian)
     return {
-      longitude: Cesium.Math.toDegrees(cartographic.longitude),
       latitude: Cesium.Math.toDegrees(cartographic.latitude),
+      longitude: Cesium.Math.toDegrees(cartographic.longitude),
     }
   })
 
   console.log('发送的坐标数据:', positions)
 
   try {
-    const response = await fetch('http://172.20.10.2:1235/connect/postMessage', {
+    const response = await fetch('http://47.122.123.251:1235/connect/postMessage', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ route: positions }),
