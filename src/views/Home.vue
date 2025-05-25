@@ -118,12 +118,16 @@
 import * as Cesium from 'cesium'
 
 import { ElMessage, ElMessageBox } from 'element-plus'
-import axios from 'axios'
+// import axios from 'axios'
+import { fetchPosition } from '@/api/fetchPosition.js'
+// import {service}  from '@/utils/request.js'
 import { getLayerName, getWorkName, uploadLayer } from '@/api/getLayer.js'
-import { onMounted, ref, reactive, watch, toRefs, nextTick } from 'vue'
+import { onMounted, ref, reactive, watch, toRefs, nextTick, onUnmounted } from 'vue'
 import { handleExceed, uploadFileError } from '@/utils/fileUpload/fileUpload.js'
 // import.meta.env.VITE_API_BASE_URL  // 确保在 `home.vue` 里直接使用
 import { getBaseURL } from '@/utils/request.js'
+// import { request } from 'pulp'
+import request from '@/utils/request.js'
 
 const baseUrl = getBaseURL()
 //显示地图创建对话框
@@ -148,35 +152,96 @@ let handler = null // 事件处理器
 let entity = null // 存储绘制的路线
 const modelEntity = ref(null)
 // 机器狗的初始坐标
+//latitude: 30.52975654413782, longitude: 114.34945259087526
+const initLng = ref(114.35276493) // 默认经度
+const initLat = ref(30.47844799) // 默认纬度
 // const initLng = ref(null)
 // const initLat = ref(null)
-const initLng = 114.34972
-const initLat = 30.5297
 const initAlt = 0
+// const startCartesian = ref(null)
+const startCartesian = Cesium.Cartesian3.fromDegrees(initLng.value, initLat.value, initAlt)
 
-// // 将起点转换为 Cartesian3 坐标
-// const fixedFrameTransform = Cesium.Transforms.localFrameToFixedFrameGenerator('north', 'west')
+// if (initLng.value == null && initLat.value == null) {
+//   startCartesian = Cesium.Cartesian3.fromDegrees(114.35245723, 30.47807759, 0)
+// }
 
-// // 初始化起点坐标，并确保不为 null
-// startPoint.value = Cesium.Cartesian3.fromDegrees(initLng, initLat, initAlt)
-
-const startCartesian = Cesium.Cartesian3.fromDegrees(initLng, initLat, initAlt)
-
-// 2. currentPos：用于实时更新的坐标，初始赋为起点
-const currentPos = ref(startCartesian)
-
+const currentPos = ref(null)
 let timer = null
 
 // 定义 fetchPosition：请求后台最新坐标，更新 currentPos
-const fetchPosition = async () => {
+// const fetchPosition = async () => {
+//   try {
+//     console.log('发起定位请求')
+//     const { data } = await axios.get('http://47.122.123.251:2345/api/go2/position/current')
+//     console.log('响应数据', data)
+
+//     if (data.status === 'success') {
+//       const { latitude, longitude } = data.position
+//       const lat = parseFloat(latitude)
+//       const lng = parseFloat(longitude)
+
+//       if (!isNaN(lat) && !isNaN(lng)) {
+//         const position = Cesium.Cartesian3.fromDegrees(lng, lat, initAlt)
+//         currentPos.value = position
+//         drawnCoordinates.value.push(position)
+//         console.log('更新坐标成功', position)
+//       } else {
+//         console.warn('经纬度无效:', lat, lng)
+//       }
+//     } else {
+//       console.warn('接口返回状态不是 success:', data)
+//     }
+//   } catch (e) {
+//     console.error('请求异常:', e)
+//   }
+// }
+const getPosition = async () => {
+  console.log('进入 fetchPosition')
+  const url = 'http://47.122.123.251:2345/go2/position/current'
+  let lat, lng
   try {
-    const { data } = await axios.get('http://117.72.53.173:2345/api/go2/position/current')
-    if (data.status === 'success') {
-      const { latitude, longitude } = data.position
-      currentPos.value = Cesium.Cartesian3.fromDegrees(longitude, latitude, initAlt)
+    const res = await fetchPosition(url)
+    console.log('接口返回：', res)
+
+    if (res.status === 'success') {
+      console.log('接口返回成功')
+      const { latitude, longitude } = res.position
+      lat = parseFloat(latitude)
+      lng = parseFloat(longitude)
     }
+    // const data = response.data.data
+    // console.log('响应数据', data)
+
+    // if (data.status === 'success') {
+    //   const { latitude, longitude } = data.position
+    //   const lat = parseFloat(latitude)
+    //   const lng = parseFloat(longitude)
+
+    // if (!isNaN(lat) && !isNaN(lng)) {
+    //   const position = Cesium.Cartesian3.fromDegrees(lng, lat, initAlt)
+    //   currentPos.value = position
+    //   drawnCoordinates.value.push(position)
+    //   console.log('更新坐标成功', position)
+    // } else {
+    //   console.warn('经纬度无效:', lat, lng)
+    // }
+    // } else {
+    //   console.warn('接口返回非 success:', data)
+    // }
   } catch (e) {
-    console.error('定位请求失败', e)
+    console.error('请求异常:', e)
+  }
+  if (!isNaN(lat) && !isNaN(lng)) {
+    const position = Cesium.Cartesian3.fromDegrees(lng, lat, initAlt)
+    currentPos.value = position
+    drawnCoordinates.value.push(position)
+    console.log('更新坐标成功', position)
+  } else {
+    console.warn('经纬度无效:', lat, lng)
+    // const position = Cesium.Cartesian3.fromDegrees(114.35245723, 30.47807759, initAlt)
+    // currentPos.value = position
+    // drawnCoordinates.value.push(position)
+    ElMessage.error('经纬度无效:', lat, lng)
   }
 }
 
@@ -232,9 +297,18 @@ onMounted(() => {
     navigationInstructionsInitiallyVisible: false,
     shouldAnimate: true,
   })
-  initModelAndMonitoring()
-  fetchPosition()
-  timer = setInterval(fetchPosition, 5000)
+
+  getPosition().then(() => {
+    initModelAndMonitoring()
+  })
+  if (!timer) {
+    timer = setInterval(getPosition, 10000)
+  }
+  if (initLng.value != null && initLat.value != null) {
+    const cartesian = Cesium.Cartesian3.fromDegrees(initLng.value, initLat.value, initAlt)
+    startCartesian.value = cartesian
+    currentPos.value = cartesian
+  }
 })
 
 const selectedLayer = ref('')
@@ -246,6 +320,7 @@ const handleSelecedLayer = (rowDate) => {
     console.error('选中的行数据无效或缺少 date 属性')
   }
 }
+const truemap = 'truemap:truemap' // 替换成实际的图层名
 
 // 加载图层并跳转到指定坐标
 const loadLayers = () => {
@@ -255,9 +330,10 @@ const loadLayers = () => {
     ElMessage.error('Cesium 视图器未初始化')
     return
   }
-
-  const layerName = `${selectedLayer.value}:${selectedLayer.value}` // const layerUrl = `http://202.140.140.215:9999/geoserver/${selectedLayer.value}/wms?`;
-  const layerUrl = `http://47.122.123.251:8233/geoserver/${selectedLayer.value}/wms?` // const bbox = "114.348977902349,30.528903163361175,114.35036065924551,30.530418382267538";
+  const layerName = truemap // const layerUrl = `http://202.140.140.215:9999/geoserver/${selectedLayer.value}/wms?`;
+  //const layerName = `${selectedLayer.value}:${selectedLayer.value}` // const layerUrl = `http://202.140.140.215:9999/geoserver/${selectedLayer.value}/wms?`;
+  // const layerUrl = `http://47.122.123.251:8233/geoserver/${selectedLayer.value}/wms?` // const bbox = "114.348977902349,30.528903163361175,114.35036065924551,30.530418382267538";
+  const layerUrl = `http://47.122.123.251:8233/geoserver/truemap/wms?` // const bbox = "114.348977902349,30.528903163361175,114.35036065924551,30.530418382267538";
   // **检查是否已存在相同的图层，避免重复加载**
   const layers = viewer.value.imageryLayers
   for (let i = 0; i < layers.length; i++) {
@@ -270,7 +346,8 @@ const loadLayers = () => {
 
   const imageryProvider = new Cesium.WebMapServiceImageryProvider({
     url: layerUrl,
-    layers: layerName,
+    // layers: layerName,
+    layers: truemap,
     parameters: {
       service: 'WMS',
       format: 'image/png',
@@ -294,10 +371,10 @@ const loadLayers = () => {
     // });//114 30
     viewer.value.camera.flyTo({
       destination: Cesium.Rectangle.fromDegrees(
-        114.348977902349,
-        30.528903163361175,
-        114.35036065924551,
-        30.530418382267538,
+        114.35174565816527,
+        30.47722442663829,
+        114.35321111393918,
+        30.4788066443522,
       ),
     })
 
@@ -355,6 +432,11 @@ const getnameWork = async () => {
     ElMessage.error(res.msg)
   }
 }
+
+watch(currentPos, (newVal) => {
+  console.log('currentPos 改变:', newVal)
+})
+
 // const initModelAndMonitoring = () => {
 //   if (!viewer.value) return
 
@@ -393,7 +475,9 @@ const initModelAndMonitoring = () => {
   // —— ① 固定起点实体 ——
   viewer.value.entities.add({
     id: 'start-point',
-    position: startCartesian,
+    // position: startCartesian.value,
+    position: startCartesian || Cesium.Cartesian3.fromDegrees(114.35218047, 30.47829655, initAlt),
+
     point: {
       pixelSize: 12,
       color: Cesium.Color.YELLOW,
@@ -410,6 +494,14 @@ const initModelAndMonitoring = () => {
     point: {
       pixelSize: 10,
       color: Cesium.Color.BLUE,
+    },
+  })
+  viewer.value.entities.add({
+    id: 'route-line',
+    polyline: {
+      positions: new Cesium.CallbackProperty(() => drawnCoordinates.value, false),
+      width: 3,
+      material: Cesium.Color.BLUE,
     },
   })
 }
@@ -626,7 +718,7 @@ const sendRouteToBackend = async () => {
     const response = await fetch('http://47.122.123.251:1235/connect/postMessage', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ route: positions }),
+      body: JSON.stringify(positions),
     })
 
     if (response.ok) {
@@ -645,6 +737,12 @@ watch(layerName, () => {
   storename.value = layerName.value
   console.log(storename.value)
   // handleSuccess();
+})
+onUnmounted(() => {
+  if (timer) {
+    clearInterval(timer)
+    timer = null
+  }
 })
 </script>
 
